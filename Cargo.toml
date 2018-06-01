@@ -1,0 +1,25 @@
+[package]
+name = "pcs_judge"
+version = "0.1.0"
+authors = ["Tom Almeida <tommoa256@gmail.com>"]
+
+[dependencies]
+clap = "*"
+futures = "0.1"
+libc = "*"
+log = "*"
+pretty_env_logger = "*"
+pcs_protocol = { path = "../pcs_protocol" }
+rustls = "*"
+mio = "0.6"
+serde = "1.0"
+serde_derive = "1.0"
+serde_yaml = "0.7"
+tokio-core = "0.1"
+tokio-io = "0.1"
+tokio-rustls = "0.6"
+webpki = "0.18.0-alpha3"
+webpki-roots = "*"
+
+[target.'cfg(windows)'.dependencies]
+winapi = "*"
