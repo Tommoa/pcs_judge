@@ -2,6 +2,7 @@
 name = "pcs_judge"
 version = "0.1.0"
 authors = ["Tom Almeida <tommoa256@gmail.com>"]
+license = "MIT"
 
 [dependencies]
 clap = "*"
