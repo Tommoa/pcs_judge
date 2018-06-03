@@ -1,6 +1,3 @@
-extern crate pcs_protocol;
-use self::pcs_protocol::MarkResult;
-
 extern crate libc;
 
 use std::{ ffi::CString, fs, io::Write };
@@ -18,7 +15,6 @@ pub fn setup(dir: String) -> (thread::JoinHandle<()>, mpsc::Sender<ToMark>, mpsc
 }
 
 pub struct ToMark {
-    pub sequence:   u16,
     pub batch:      u32,
     pub answer:     String,
     pub lang:       String,
@@ -29,10 +25,19 @@ pub struct ToMark {
 
 #[derive(Clone, Copy)]
 pub struct ToSend {
-    pub sequence:   u16,
     pub batch:      u32,
     pub case:       u64,
     pub result:     MarkResult
+}
+
+#[derive(Clone, Copy)]
+pub enum MarkResult {
+    Fail,
+    Success(i64, i64),
+    CE,
+    RTE,
+    TLE,
+    Blocked(u32)
 }
 
 fn run(dir: String, sender: mpsc::Sender<ToSend>, recver: mpsc::Receiver<ToMark>) {
@@ -51,7 +56,6 @@ fn run(dir: String, sender: mpsc::Sender<ToSend>, recver: mpsc::Receiver<ToMark>
             match Command::new(vec_args[0]).args(vec_args[1..].iter()).spawn().unwrap().wait() {
                 Ok(exit) => if !exit.success() {
                     sender.send(ToSend {
-                        sequence:   input.sequence,
                         batch:      input.batch,
                         case:       0,
                         result:     MarkResult::CE
@@ -60,7 +64,6 @@ fn run(dir: String, sender: mpsc::Sender<ToSend>, recver: mpsc::Receiver<ToMark>
                 },
                 Err(_) => {
                     sender.send(ToSend {
-                        sequence:   input.sequence,
                         batch:      input.batch,
                         case:       0,
                         result:     MarkResult::CE
@@ -113,7 +116,6 @@ fn run(dir: String, sender: mpsc::Sender<ToSend>, recver: mpsc::Receiver<ToMark>
                 x => x
             };
             sender.send(ToSend {
-                sequence:   input.sequence,
                 batch:      input.batch,
                 case:       case_num as u64,
                 result:     result

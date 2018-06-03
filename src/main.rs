@@ -36,7 +36,7 @@ use std::io;
 use std::net::ToSocketAddrs;
 use std::sync::{ Arc, Mutex };
 
-fn main() -> Result<(), io::Error> {
+fn main() {
     pretty_env_logger::init();
 
     let m = App::new("PCS competition judge")
@@ -105,41 +105,29 @@ fn main() -> Result<(), io::Error> {
     let (_, to_judge, from_judge) = judge::setup(m.value_of("executors").unwrap().to_string());
     info!("Started judge thread");
 
-    let (read, write) = client.split();
-    let write = Arc::new(Mutex::new(write));
+    let fd = {
+        use std::os::unix::io::AsRawFd;
+        client.get_ref().0.as_raw_fd()
+    };
+    let arc_client = Arc::new(Mutex::new(client));
 
     let judge_socket = tasks::Judge {
         recv: from_judge,
-        send: write.clone()
+        send: arc_client.clone()
     };
     let judge_stream = judge_socket.for_each(move |(mark, socket)| {
-        let mut to_write = Vec::new();
-        let done = MsgType::Done(MsgDone {
-            sequence:   mark.sequence,
-            batch:      mark.batch,
-            test:       mark.case,
-            result:     mark.result
-        });
-        done.serialize(&mut to_write);
-        let write = tasks::Writer {
-            send:     socket.clone(),
-            to_write: to_write,
-            done:     0
-        }
-            .map(|_| debug!("Succeeded in writing to socket!"))
-            .map_err(|e| error!("Error writing to socket! {}", e));
+        let done = pcs_protocol::Result::new();
 
-        handle.spawn(write);
         Ok(())
     });
 
     let handle = core.handle();
     let server_socket = tasks::Server {
-        recv:        read,
-        resp:        write.clone(),
-        send:        to_judge
+        serv:    arc_client.clone(),
+        send:    to_judge,
+        recv_fd: fd
     };
-    let server_stream = server_socket.for_each(move |(msg, socket, judge)| responses::socket_response(msg, socket, judge, handle.clone()));
+    let server_stream = server_socket.for_each(move |(socket, judge)| responses::socket_response(socket, judge, handle.clone()));
 
-    core.run(judge_stream.select(server_stream)).map(|_| ()).map_err(|x| x.0)
+    core.run(judge_stream.select(server_stream));
 }

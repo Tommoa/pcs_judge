@@ -1,5 +1,4 @@
-extern crate pcs_protocol;
-use self::pcs_protocol::MarkResult;
+use super::MarkResult;
 
 extern crate libc;
 
@@ -200,7 +199,7 @@ impl<'a> Debugger<'a> {
                     }
                     if entering && !self.handlers.contains(&regs.orig_rax) {
                         // KILL IT WITH FIRE
-                        self.process.reason = MarkResult::Blocked(regs.orig_rax);
+                        self.process.reason = MarkResult::Blocked(regs.orig_rax as u32);
                         libc::kill(p_pid, libc::SIGKILL);
                     }
                     entering = !entering;
@@ -223,6 +222,6 @@ impl<'a> Debugger<'a> {
                 first = false;
             }
         }
-        self.process.reason = MarkResult::Success(ru.ru_utime.tv_sec as i32, ru.ru_utime.tv_usec as i32);
+        self.process.reason = MarkResult::Success(ru.ru_utime.tv_sec, ru.ru_utime.tv_usec);
     }
 }

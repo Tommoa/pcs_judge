@@ -1,5 +1,4 @@
 extern crate pcs_protocol;
-use pcs_protocol::{ MsgType, SerDe };
 
 extern crate futures;
 use futures::prelude::*;
@@ -9,7 +8,9 @@ extern crate tokio_rustls;
 extern crate tokio_core;
 use tokio_core::net;
 extern crate tokio_io;
-use tokio_io::{ AsyncRead, AsyncWrite, io::{ ReadHalf, WriteHalf } };
+use tokio_io::{ AsyncWrite };
+
+extern crate libc;
 
 use std::sync::{ Arc, mpsc, Mutex };
 use std::io;
@@ -17,10 +18,10 @@ use super::judge;
 
 pub struct Judge {
     pub recv: mpsc::Receiver<judge::ToSend>,
-    pub send: Arc<Mutex<WriteHalf<tokio_rustls::TlsStream<net::TcpStream, rustls::ClientSession>>>>,
+    pub send: Arc<Mutex<tokio_rustls::TlsStream<net::TcpStream, rustls::ClientSession>>>,
 }
 impl Stream for Judge {
-    type Item = (judge::ToSend, Arc<Mutex<WriteHalf<tokio_rustls::TlsStream<net::TcpStream, rustls::ClientSession>>>>);
+    type Item = (judge::ToSend, Arc<Mutex<tokio_rustls::TlsStream<net::TcpStream, rustls::ClientSession>>>);
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, io::Error> {
@@ -33,35 +34,36 @@ impl Stream for Judge {
 }
 
 pub struct Server {
-    pub recv:        ReadHalf<tokio_rustls::TlsStream<net::TcpStream, rustls::ClientSession>>,
-    pub resp:        Arc<Mutex<WriteHalf<tokio_rustls::TlsStream<net::TcpStream, rustls::ClientSession>>>>,
-    pub send:        mpsc::Sender<judge::ToMark>,
+    pub serv:    Arc<Mutex<tokio_rustls::TlsStream<net::TcpStream, rustls::ClientSession>>>,
+    pub send:    mpsc::Sender<judge::ToMark>,
+    pub recv_fd: i32
 }
 impl Stream for Server {
-    type Item = (MsgType, Arc<Mutex<WriteHalf<tokio_rustls::TlsStream<net::TcpStream, rustls::ClientSession>>>>, mpsc::Sender<judge::ToMark>);
+    type Item = (Arc<Mutex<tokio_rustls::TlsStream<net::TcpStream, rustls::ClientSession>>>, mpsc::Sender<judge::ToMark>);
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, io::Error> {
-        let mut v = [0u8;2];
-        match self.recv.poll_read(&mut v) {
-            Ok(Async::Ready(2)) => {
-                Ok(Async::Ready(
-                    Some((MsgType::deserialize(v, &mut self.recv).unwrap(),
-                          self.resp.clone(), self.send.clone()))
-                ))
-            },
-            Ok(_) => {
-                Ok(Async::NotReady)
-            },
-            Err(e) => {
-                Err(e)
-            }
+        use std::mem;
+        let mut pfd: libc::pollfd = unsafe { mem::zeroed() };
+        pfd.fd = self.recv_fd;
+        pfd.events |= libc::POLLIN;
+        unsafe { libc::poll(&mut pfd, 1, 0) };
+        if pfd.revents & libc::POLLIN > 0 {
+            Ok(Async::Ready(Some((self.serv.clone(), self.send.clone()))))
+        } else if pfd.revents & libc::POLLHUP > 0 {
+            Ok(Async::Ready(None))
+        } else if pfd.revents & libc::POLLERR > 0 {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "POLLERR"))
+        } else if pfd.revents & libc::POLLNVAL > 0 {
+            Err(io::Error::new(io::ErrorKind::InvalidData, "POLLNVAL"))
+        } else {
+            Ok(Async::NotReady)
         }
     }
 }
 
 pub struct Writer<T> {
-    pub send:     Arc<Mutex<WriteHalf<T>>>,
+    pub send:     Arc<Mutex<T>>,
     pub to_write: Vec<u8>,
     pub done:     usize
 }
