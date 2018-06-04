@@ -1,7 +1,10 @@
+extern crate pcs_protocol;
+use pcs_protocol::MarkResult;
+
 extern crate libc;
 
-use std::{ ffi::CString, fs, io::Write };
-use std::{ path::Path, process::Command };
+use std::{ ffi::CString, fs, io::{ Read, Write } };
+use std::{ path::Path, process::{ Command, Stdio } };
 use std::{ sync::mpsc, thread };
 
 use super::executor;
@@ -23,21 +26,11 @@ pub struct ToMark {
     pub case_out:   Vec<String>
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct ToSend {
     pub batch:      u32,
-    pub case:       u64,
+    pub case:       u32,
     pub result:     MarkResult
-}
-
-#[derive(Clone, Copy)]
-pub enum MarkResult {
-    Fail,
-    Success(i64, i64),
-    CE,
-    RTE,
-    TLE,
-    Blocked(u32)
 }
 
 fn run(dir: String, sender: mpsc::Sender<ToSend>, recver: mpsc::Receiver<ToMark>) {
@@ -53,20 +46,35 @@ fn run(dir: String, sender: mpsc::Sender<ToSend>, recver: mpsc::Receiver<ToMark>
         sub.flush().unwrap();
         if let Some(pre_exec) = executor.pre_exec {
             let vec_args: Vec<&str> = pre_exec.split_whitespace().collect();
-            match Command::new(vec_args[0]).args(vec_args[1..].iter()).spawn().unwrap().wait() {
+            let mut cmd = Command::new(vec_args[0]).args(vec_args[1..].iter()).stdout(Stdio::piped()).spawn().unwrap();
+            match cmd.wait() {
                 Ok(exit) => if !exit.success() {
+                    let output = if let Some(mut out) = cmd.stdout {
+                        let mut s = String::new();
+                        out.read_to_string(&mut s).unwrap();
+                        s
+                    } else {
+                        "Unknown error".to_owned()
+                    };
                     sender.send(ToSend {
                         batch:      input.batch,
                         case:       0,
-                        result:     MarkResult::CE
+                        result:     MarkResult::CE(output)
                     }).unwrap();
                     continue;
                 },
                 Err(_) => {
+                    let output = if let Some(mut out) = cmd.stdout {
+                        let mut s = String::new();
+                        out.read_to_string(&mut s).unwrap();
+                        s
+                    } else {
+                        "Unknown error".to_owned()
+                    };
                     sender.send(ToSend {
                         batch:      input.batch,
                         case:       0,
-                        result:     MarkResult::CE
+                        result:     MarkResult::CE(output)
                     }).unwrap();
                     continue;
                 }
@@ -100,7 +108,7 @@ fn run(dir: String, sender: mpsc::Sender<ToSend>, recver: mpsc::Receiver<ToMark>
                                 if output == input.case_out[case_num-1] {
                                     MarkResult::Success(s, ns)
                                 } else {
-                                    MarkResult::Fail
+                                    MarkResult::Fail(output)
                                 }
                             }
                         }
@@ -108,7 +116,7 @@ fn run(dir: String, sender: mpsc::Sender<ToSend>, recver: mpsc::Receiver<ToMark>
                             if output == input.case_out[case_num-1] {
                                 MarkResult::Success(s, ns)
                             } else {
-                                MarkResult::Fail
+                                MarkResult::Fail(output)
                             }
                         }
                     }
@@ -117,7 +125,7 @@ fn run(dir: String, sender: mpsc::Sender<ToSend>, recver: mpsc::Receiver<ToMark>
             };
             sender.send(ToSend {
                 batch:      input.batch,
-                case:       case_num as u64,
+                case:       case_num as u32,
                 result:     result
             }).unwrap();
         }

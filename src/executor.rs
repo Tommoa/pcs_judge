@@ -14,6 +14,7 @@ impl Executor {
     pub fn from_file(file: &mut File) -> Executor {
         serde_yaml::from_reader(file).unwrap()
     }
+    #[allow(dead_code)] // Remove this once we actually call to_file()
     pub fn to_file(&self, file: &mut File) {
         serde_yaml::to_writer(file, self).unwrap();
     }

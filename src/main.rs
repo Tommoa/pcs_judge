@@ -36,7 +36,7 @@ use std::io;
 use std::net::ToSocketAddrs;
 use std::sync::{ Arc, Mutex };
 
-fn main() {
+fn main() -> Result<(), io::Error> {
     pretty_env_logger::init();
 
     let m = App::new("PCS competition judge")
@@ -109,25 +109,34 @@ fn main() {
         use std::os::unix::io::AsRawFd;
         client.get_ref().0.as_raw_fd()
     };
-    let arc_client = Arc::new(Mutex::new(client));
+    let (read, write) = client.split();
+    let arc_client = Arc::new(Mutex::new(write));
 
     let judge_socket = tasks::Judge {
         recv: from_judge,
         send: arc_client.clone()
     };
     let judge_stream = judge_socket.for_each(move |(mark, socket)| {
-        let done = pcs_protocol::Result::new();
-
+        use std::ops::DerefMut;
+        use pcs_protocol::SerDe;
+        let socket = socket.clone();
+        let mut socket = socket.lock().unwrap();
+        let mut socket = socket.deref_mut();
+        pcs_protocol::MsgType::Marked(MsgMarked {
+            batch:  mark.batch,
+            case:   mark.case,
+            result: mark.result
+        }).serialize(&mut socket)?;
         Ok(())
     });
 
-    let handle = core.handle();
     let server_socket = tasks::Server {
         serv:    arc_client.clone(),
+        read:    read,
         send:    to_judge,
         recv_fd: fd
     };
-    let server_stream = server_socket.for_each(move |(socket, judge)| responses::socket_response(socket, judge, handle.clone()));
+    let server_stream = server_socket.for_each(move |(msg, send, judge)| responses::socket_response(msg, send, judge));
 
-    core.run(judge_stream.select(server_stream));
+    core.run(judge_stream.select(server_stream)).map(|_| ()).map_err(|e| e.0)
 }

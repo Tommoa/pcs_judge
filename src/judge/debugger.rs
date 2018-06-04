@@ -29,7 +29,7 @@ impl Process {
             pid:    None,
             stdin:  0,
             stdout: 0,
-            reason: MarkResult::Fail,
+            reason: MarkResult::RTE,
             m_time: max_time
         }
     }
@@ -199,7 +199,7 @@ impl<'a> Debugger<'a> {
                     }
                     if entering && !self.handlers.contains(&regs.orig_rax) {
                         // KILL IT WITH FIRE
-                        self.process.reason = MarkResult::Blocked(regs.orig_rax as u32);
+                        self.process.reason = MarkResult::Blocked(regs.orig_rax);
                         libc::kill(p_pid, libc::SIGKILL);
                     }
                     entering = !entering;
@@ -222,6 +222,6 @@ impl<'a> Debugger<'a> {
                 first = false;
             }
         }
-        self.process.reason = MarkResult::Success(ru.ru_utime.tv_sec, ru.ru_utime.tv_usec);
+        self.process.reason = MarkResult::Success(ru.ru_utime.tv_sec as i32, ru.ru_utime.tv_usec as i32);
     }
 }

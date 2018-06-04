@@ -1,27 +1,21 @@
 extern crate pcs_protocol;
+use pcs_protocol::{ MsgType, SerDe };
 
 extern crate futures;
 use futures::prelude::*;
 
-extern crate rustls;
-extern crate tokio_rustls;
-extern crate tokio_core;
-use tokio_core::net;
-extern crate tokio_io;
-use tokio_io::{ AsyncWrite };
-
 extern crate libc;
 
 use std::sync::{ Arc, mpsc, Mutex };
-use std::io;
+use std::io::{ self, Read, Write };
 use super::judge;
 
-pub struct Judge {
+pub struct Judge<W> {
     pub recv: mpsc::Receiver<judge::ToSend>,
-    pub send: Arc<Mutex<tokio_rustls::TlsStream<net::TcpStream, rustls::ClientSession>>>,
+    pub send: Arc<Mutex<W>>,
 }
-impl Stream for Judge {
-    type Item = (judge::ToSend, Arc<Mutex<tokio_rustls::TlsStream<net::TcpStream, rustls::ClientSession>>>);
+impl<W: Write> Stream for Judge<W> {
+    type Item = (judge::ToSend, Arc<Mutex<W>>);
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, io::Error> {
@@ -33,13 +27,14 @@ impl Stream for Judge {
     }
 }
 
-pub struct Server {
-    pub serv:    Arc<Mutex<tokio_rustls::TlsStream<net::TcpStream, rustls::ClientSession>>>,
+pub struct Server<R, W> {
+    pub serv:    Arc<Mutex<W>>,
+    pub read:    R,
     pub send:    mpsc::Sender<judge::ToMark>,
     pub recv_fd: i32
 }
-impl Stream for Server {
-    type Item = (Arc<Mutex<tokio_rustls::TlsStream<net::TcpStream, rustls::ClientSession>>>, mpsc::Sender<judge::ToMark>);
+impl<R: Read, W: Write> Stream for Server<R, W> {
+    type Item = (MsgType, Arc<Mutex<W>>, mpsc::Sender<judge::ToMark>);
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, io::Error> {
@@ -49,7 +44,7 @@ impl Stream for Server {
         pfd.events |= libc::POLLIN;
         unsafe { libc::poll(&mut pfd, 1, 0) };
         if pfd.revents & libc::POLLIN > 0 {
-            Ok(Async::Ready(Some((self.serv.clone(), self.send.clone()))))
+            Ok(Async::Ready(Some((MsgType::deserialize(&mut self.read)?, self.serv.clone(), self.send.clone()))))
         } else if pfd.revents & libc::POLLHUP > 0 {
             Ok(Async::Ready(None))
         } else if pfd.revents & libc::POLLERR > 0 {
@@ -58,34 +53,6 @@ impl Stream for Server {
             Err(io::Error::new(io::ErrorKind::InvalidData, "POLLNVAL"))
         } else {
             Ok(Async::NotReady)
-        }
-    }
-}
-
-pub struct Writer<T> {
-    pub send:     Arc<Mutex<T>>,
-    pub to_write: Vec<u8>,
-    pub done:     usize
-}
-impl<T: AsyncWrite> Future for Writer<T> {
-    type Item = ();
-    type Error = io::Error;
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        if self.done >= self.to_write.len() {
-            Ok(Async::Ready(()))
-        } else {
-            match self.send.lock().unwrap().poll_write(&self.to_write[self.done..]) {
-                Ok(Async::Ready(x)) => {
-                    self.done += x;
-                    if self.done >= self.to_write.len() {
-                        Ok(Async::Ready(()))
-                    } else {
-                        Ok(Async::NotReady)
-                    }
-                },
-                Ok(Async::NotReady) => Ok(Async::NotReady),
-                Err(e) => Err(e)
-            }
         }
     }
 }
